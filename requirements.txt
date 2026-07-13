@@ -1,7 +1,8 @@
 flask
 waitress
-torch==2.11.0
-transformers==5.12.1
+torch
+transformers
+safetensors
 pandas
 numpy
 scikit-learn
