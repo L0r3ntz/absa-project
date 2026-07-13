@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ABSA IndoBERT - Prediksi Sentimen Berbasis Aspek</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+        .sentiment-positive { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .sentiment-negative { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+        .sentiment-neutral { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+        .prob-bar { height: 8px; border-radius: 4px; transition: width 0.5s ease; }
+        .aspect-card { transition: all 0.3s ease; }
+        .aspect-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); }
+        .confidence-ring { transition: stroke-dashoffset 0.8s ease; }
+        .fade-in { animation: fadeIn 0.5s ease forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .stagger-1 { animation-delay: 0.1s; }
+        .stagger-2 { animation-delay: 0.2s; }
+        .stagger-3 { animation-delay: 0.3s; }
+        .stagger-4 { animation-delay: 0.4s; }
+        .stagger-5 { animation-delay: 0.5s; }
+        .stagger-6 { animation-delay: 0.6s; }
+        @media (prefers-reduced-motion: reduce) {
+            .fade-in { animation: none; opacity: 1; transform: none; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="max-w-5xl mx-auto px-4 py-8">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900 mb-2">ABSA IndoBERT</h1>
+            <p class="text-gray-600">Prediksi Sentimen Berbasis Aspek untuk Opini Pascabencana Hidrometeorologi Aceh</p>
+            <div class="mt-4 flex justify-center gap-4 text-sm text-gray-500">
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500"></span>Positif</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-yellow-500"></span>Netral</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500"></span>Negatif</span>
+            </div>
+        </header>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 md:p-8 mb-8">
+            <div class="mb-6">
+                <label for="input-text" class="block text-sm font-medium text-gray-700 mb-2">Masukkan Opini/Pendapat</label>
+                <textarea 
+                    id="input-text" 
+                    rows="4" 
+                    class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none transition-all"
+                    placeholder="Contoh: Pemerintah tidak membantu warga pasca bencana, bantuan logistik tidak sampai ke warga yang membutuhkan..."
+                ></textarea>
+                <p class="text-xs text-gray-400 mt-1">Masukkan opini mengenai pemulihan pascabencana di Aceh (logistik, evakuasi, koordinasi pemerintah, infrastruktur, layanan kesehatan)</p>
+            </div>
+            
+            <button 
+                id="predict-btn"
+                class="w-full md:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+                <svg id="btn-spinner" class="w-5 h-5 animate-spin hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span id="btn-text">Analisis Sentimen</span>
+            </button>
+        </div>
+
+        <div id="results-section" class="hidden">
+            <div class="mb-6 fade-in">
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold text-gray-900">Hasil Analisis</h2>
+                        <div class="flex items-center gap-4 text-sm text-gray-600">
+                            <span>Total Aspek Terdeteksi: <span id="total-aspects" class="font-bold text-blue-600">0</span></span>
+                            <span>Teks: <span id="char-count" class="font-bold">0</span> karakter</span>
+                        </div>
+                    </div>
+                    <div id="results-container" class="space-y-4"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 fade-in stagger-1">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Distribusi Sentimen</h3>
+                    <div class="h-64 flex items-center justify-center">
+                        <canvas id="sentiment-chart"></canvas>
+                    </div>
+                    <div id="sentiment-legend" class="mt-4 flex flex-wrap justify-center gap-4 text-sm"></div>
+                </div>
+                
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 fade-in stagger-2">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Rincian Probabilitas per Aspek</h3>
+                    <div class="h-64 flex items-center justify-center">
+                        <canvas id="probability-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 bg-white rounded-2xl shadow-sm border border-gray-100 p-6 fade-in stagger-3">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Ringkasan Eksekutif</h3>
+                <div id="summary" class="prose prose-sm max-w-none text-gray-600"></div>
+            </div>
+        </div>
+
+        <footer class="mt-12 text-center text-sm text-gray-400">
+            <p>Model: IndoBERT Base (indobenchmark/indobert-base-p1) | Akurasi Model: 91.18% | Data: Opini Pascabencana Hidrometeorologi Aceh</p>
+        </footer>
+    </div>
+
+    <script>
+        const predictBtn = document.getElementById('predict-btn');
+        const inputText = document.getElementById('input-text');
+        const resultsSection = document.getElementById('results-section');
+        const resultsContainer = document.getElementById('results-container');
+        const totalAspectsEl = document.getElementById('total-aspects');
+        const charCountEl = document.getElementById('char-count');
+        const btnSpinner = document.getElementById('btn-spinner');
+        const btnText = document.getElementById('btn-text');
+        const summaryEl = document.getElementById('summary');
+
+        let sentimentChart = null;
+        let probabilityChart = null;
+
+        const sentimentColors = {
+            positif: '#10b981',
+            netral: '#f59e0b',
+            negatif: '#ef4444'
+        };
+
+        const sentimentLabels = {
+            positif: 'Positif',
+            netral: 'Netral',
+            negatif: 'Negatif'
+        };
+
+        const aspectNames = {
+            logistik_bantuan: 'Logistik & Bantuan',
+            evakuasi_pengungsian: 'Evakuasi & Pengungsian',
+            koordinasi_pemerintah: 'Koordinasi Pemerintah',
+            infrastruktur_rekonstruksi: 'Infrastruktur & Rekonstruksi',
+            layanan_kesehatan: 'Layanan Kesehatan'
+        };
+
+        function getSentimentClass(sentiment) {
+            return `sentiment-${sentiment}`;
+        }
+
+        function createConfidenceRing(confidence) {
+            const circumference = 2 * Math.PI * 16;
+            const offset = circumference * (1 - confidence);
+            return `
+                <svg width="48" height="48" class="transform -rotate-90">
+                    <circle class="text-gray-200" cx="24" cy="24" r="16" fill="none" stroke-width="4" stroke="currentColor"/>
+                    <circle class="confidence-ring text-green-500" cx="24" cy="24" r="16" fill="none" stroke-width="4" stroke="currentColor" 
+                        stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"/>
+                </svg>
+            `;
+        }
+
+        function renderResultCard(result, index) {
+            const confidencePct = Math.round(result.confidence * 100);
+            const isKeywordDetected = result.aspek_terdeteksi_keyword;
+            
+            return `
+                <div class="aspect-card bg-white border border-gray-100 rounded-xl p-5 fade-in stagger-${index + 1}" style="animation-delay: ${(index + 1) * 0.1}s">
+                    <div class="flex items-start justify-between gap-4 mb-4">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="font-semibold text-gray-900">${aspectNames[result.aspect_slug] || result.aspect_name}</span>
+                                ${isKeywordDetected ? '<span class="px-2 py-0.5 text-xs bg-green-100 text-green-700 rounded-full">Terdeteksi Kata Kunci</span>' : '<span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full">Analisis Kontekstual</span>'}
+                            </div>
+                            <p class="text-sm text-gray-500">${result.aspect_slug}</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            ${createConfidenceRing(result.confidence)}
+                            <div class="text-right">
+                                <p class="text-2xl font-bold text-gray-900">${confidencePct}%</p>
+                                <p class="text-xs text-gray-500">Keyakinan</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-gray-700">Sentimen Prediksi</span>
+                            <span class="px-3 py-1 rounded-full text-sm font-medium ${getSentimentClass(result.sentimen_prediksi)}">
+                                ${sentimentLabels[result.sentimen_prediksi]}
+                            </span>
+                        </div>
+                        <div class="space-y-2">
+                            <div>
+                                <div class="flex justify-between text-xs mb-1">
+                                    <span class="text-gray-500">Negatif</span>
+                                    <span class="font-medium text-red-600">${(result.prob_negatif * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="bg-gray-100 rounded-full overflow-hidden">
+                                    <div class="prob-bar bg-red-500" style="width: ${result.prob_negatif * 100}%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-xs mb-1">
+                                    <span class="text-gray-500">Netral</span>
+                                    <span class="font-medium text-yellow-600">${(result.prob_netral * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="bg-gray-100 rounded-full overflow-hidden">
+                                    <div class="prob-bar bg-yellow-500" style="width: ${result.prob_netral * 100}%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-xs mb-1">
+                                    <span class="text-gray-500">Positif</span>
+                                    <span class="font-medium text-green-600">${(result.prob_positif * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="bg-gray-100 rounded-full overflow-hidden">
+                                    <div class="prob-bar bg-green-500" style="width: ${result.prob_positif * 100}%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateCharts(results) {
+            const sentimentCounts = { positif: 0, netral: 0, negatif: 0 };
+            results.forEach(r => sentimentCounts[r.sentimen_prediksi]++);
+
+            if (sentimentChart) sentimentChart.destroy();
+            sentimentChart = new Chart(document.getElementById('sentiment-chart'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Positif', 'Netral', 'Negatif'],
+                    datasets: [{
+                        data: [sentimentCounts.positif, sentimentCounts.netral, sentimentCounts.negatif],
+                        backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+                        borderWidth: 0,
+                        cutout: '70%'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.label}: ${ctx.raw} aspek`
+                            }
+                        }
+                    }
+                }
+            });
+
+            document.getElementById('sentiment-legend').innerHTML = `
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-green-500"></span><span>Positif: ${sentimentCounts.positif}</span></div>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-yellow-500"></span><span>Netral: ${sentimentCounts.netral}</span></div>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span><span>Negatif: ${sentimentCounts.negatif}</span></div>
+            `;
+
+            if (probabilityChart) probabilityChart.destroy();
+            probabilityChart = new Chart(document.getElementById('probability-chart'), {
+                type: 'bar',
+                data: {
+                    labels: results.map(r => aspectNames[r.aspect_slug] || r.aspect_name),
+                    datasets: [
+                        { label: 'Negatif', data: results.map(r => (r.prob_negatif * 100).toFixed(1)), backgroundColor: '#ef4444' },
+                        { label: 'Netral', data: results.map(r => (r.prob_netral * 100).toFixed(1)), backgroundColor: '#f59e0b' },
+                        { label: 'Positif', data: results.map(r => (r.prob_positif * 100).toFixed(1)), backgroundColor: '#10b981' }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    scales: {
+                        x: { stacked: true, max: 100, title: { display: true, text: 'Probabilitas (%)' } },
+                        y: { stacked: true }
+                    },
+                    plugins: { legend: { position: 'bottom' } }
+                }
+            });
+        }
+
+        function generateSummary(results) {
+            const sentimentCounts = { positif: 0, netral: 0, negatif: 0 };
+            const keywordDetected = results.filter(r => r.aspek_terdeteksi_keyword).length;
+            const total = results.length;
+            
+            results.forEach(r => sentimentCounts[r.sentimen_prediksi]++);
+            
+            const dominantSentiment = Object.entries(sentimentCounts).sort((a, b) => b[1] - a[1])[0][0];
+            const avgConfidence = (results.reduce((sum, r) => sum + r.confidence, 0) / total * 100).toFixed(1);
+            
+            let summary = `<p class="mb-3"><strong>Total ${total} aspek</strong> dianalisis dari opini yang dimasukkan. `;
+            summary += `${keywordDetected} aspek terdeteksi melalui kata kunci, ${total - keywordDetected} aspek dianalisis secara kontekstual.</p>`;
+            
+            summary += `<p class="mb-3">Sentimen dominan: <strong class="capitalize ${getSentimentClass(dominantSentiment)} px-2 py-0.5 rounded">${sentimentLabels[dominantSentiment]}</strong> (${sentimentCounts[dominantSentiment]} dari ${total} aspek). `;
+            summary += `Rata-rata keyakinan model: <strong>${avgConfidence}%</strong>.</p>`;
+            
+            if (sentimentCounts.negatif > 0) {
+                const negAspects = results.filter(r => r.sentimen_prediksi === 'negatif').map(r => aspectNames[r.aspect_slug]).join(', ');
+                summary += `<p class="text-red-600"><strong>Perhatian:</strong> Terdapat sentimen negatif pada aspek: ${negAspects}. Perlu evaluasi lebih lanjut.</p>`;
+            }
+            if (sentimentCounts.positif > 0) {
+                const posAspects = results.filter(r => r.sentimen_prediksi === 'positif').map(r => aspectNames[r.aspect_slug]).join(', ');
+                summary += `<p class="text-green-600"><strong>Positif:</strong> Aspek ${posAspects} menunjukkan sentimen positif.</p>`;
+            }
+            
+            return summary;
+        }
+
+        async function predict() {
+            const text = inputText.value.trim();
+            if (!text) return;
+            
+            predictBtn.disabled = true;
+            btnSpinner.classList.remove('hidden');
+            btnText.textContent = 'Menganalisis...';
+            
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                
+                resultsContainer.innerHTML = data.results.map((r, i) => renderResultCard(r, i)).join('');
+                totalAspectsEl.textContent = data.total_aspects;
+                charCountEl.textContent = data.input_text.length;
+                updateCharts(data.results);
+                summaryEl.innerHTML = generateSummary(data.results);
+                resultsSection.classList.remove('hidden');
+                
+                resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Terjadi kesalahan saat memproses prediksi');
+            } finally {
+                predictBtn.disabled = false;
+                btnSpinner.classList.add('hidden');
+                btnText.textContent = 'Analisis Sentimen';
+            }
+        }
+
+        predictBtn.addEventListener('click', predict);
+        
+        inputText.addEventListener('input', () => {
+            charCountEl.textContent = inputText.value.length;
+        });
+        
+        inputText.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                predict();
+            }
+        });
+    </script>
+</body>
+</html>
